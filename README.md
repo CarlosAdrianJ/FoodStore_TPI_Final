@@ -17,7 +17,7 @@ Trabajo Práctico Integrador de Programación IV. Aplicación web para consultar
 
 ## Repositorio y demostración
 
-- Repositorio público: **PEGAR AQUÍ LA URL DE GITHUB**
+- Repositorio público: ** https://github.com/CarlosAdrianJ/FoodStore_TPI_Final **
 - Video público de demostración: **PEGAR AQUÍ EL ENLACE DEL VIDEO**
 
 ## Configuración del backend
