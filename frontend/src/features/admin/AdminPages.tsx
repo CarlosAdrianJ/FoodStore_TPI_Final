@@ -1,10 +1,10 @@
-import {useMemo,useState} from 'react'
+import {useMemo,useState,type FormEvent} from 'react'
 import {createColumnHelper} from '@tanstack/react-table'
 import {useMutation,useQuery,useQueryClient} from '@tanstack/react-query'
 import {useForm} from '@tanstack/react-form'
 import {categories,orders,products,users,message} from '../../shared/api'
 import type {Category,Order,OrderStatus,Product,ProductInput,User} from '../../types'
-import {Alert,Button,Card,Field,Input,Table,Title,money} from '../../shared/components'
+import {Alert,Button,Card,Field,Input,Modal,Table,Title,money} from '../../shared/components'
 
 export function AdminHome(){
  const q=useQuery({queryKey:['summary'],queryFn:orders.summary})
@@ -29,6 +29,10 @@ export function CategoriesAdmin(){
 }
 export function ProductsAdmin(){
  const [err,setErr]=useState('')
+ const [editingProduct,setEditingProduct]=useState<Product|null>(null)
+ const [productDraft,setProductDraft]=useState<ProductInput|null>(null)
+ const [stockProduct,setStockProduct]=useState<Product|null>(null)
+ const [stockDraft,setStockDraft]=useState({stock:0,disponible:true})
  const qc=useQueryClient()
  const cats=useQuery({queryKey:['categories'],queryFn:categories.list})
  const q=useQuery({queryKey:['products','admin'],queryFn:()=>products.list({skip:0,limit:100})})
@@ -37,13 +41,16 @@ export function ProductsAdmin(){
  const stock=useMutation({mutationFn:({id,value,available}:{id:number;value:number;available:boolean})=>products.stock(id,{stock:value,disponible:available}),onSuccess:()=>void qc.invalidateQueries({queryKey:['products']}),onError:(e:unknown)=>setErr(message(e))})
  const remove=useMutation({mutationFn:products.remove,onSuccess:()=>void qc.invalidateQueries({queryKey:['products']}),onError:(e:unknown)=>setErr(message(e))})
  const form=useForm({defaultValues:{nombre:'',descripcion:'',precio_base:0,imagen_url:'',stock:0,disponible:true,categoria_id:0},onSubmit:async({value})=>{setErr('');await create.mutateAsync(value)}})
+ const openProductEditor=(product:Product)=>{setErr('');setEditingProduct(product);setProductDraft({nombre:product.nombre,descripcion:product.descripcion||'',precio_base:product.precio_base,imagen_url:product.imagen_url||'',stock:product.stock,disponible:product.disponible,categoria_id:product.categoria_id})}
+ const saveProduct=async(event:FormEvent<HTMLFormElement>)=>{event.preventDefault();if(!editingProduct||!productDraft)return;setErr('');try{await update.mutateAsync({id:editingProduct.id,data:productDraft});setEditingProduct(null);setProductDraft(null)}catch{}}
+ const saveStock=async(event:FormEvent<HTMLFormElement>)=>{event.preventDefault();if(!stockProduct)return;setErr('');try{await stock.mutateAsync({id:stockProduct.id,value:stockDraft.stock,available:stockDraft.disponible});setStockProduct(null)}catch{}}
  const helper=createColumnHelper<Product>()
  const columns=useMemo(()=>[
   helper.accessor('nombre',{header:'Producto'}),
   helper.accessor('precio_base',{header:'Precio',cell:cell=>money(cell.getValue())}),
   helper.accessor('stock',{header:'Stock'}),
   helper.accessor('disponible',{header:'Disponible',cell:cell=>cell.getValue()?'Sí':'No'}),
-  helper.display({id:'acciones',header:'Acciones',cell:({row})=><div className="flex flex-wrap gap-2"><button className="font-semibold text-blue-800" onClick={()=>{const p=row.original;const nombre=prompt('Nombre',p.nombre);if(nombre===null)return;const precio=Number(prompt('Precio',String(p.precio_base)));const cantidad=Number(prompt('Stock',String(p.stock)));const categoria=Number(prompt('ID de categoría',String(p.categoria_id)));const descripcion=prompt('Descripción',p.descripcion||'');const imagen=prompt('URL de imagen',p.imagen_url||'');if(Number.isFinite(precio)&&precio>=0&&Number.isFinite(cantidad)&&cantidad>=0&&Number.isInteger(categoria)&&categoria>0&&descripcion!==null&&imagen!==null)update.mutate({id:p.id,data:{nombre,precio_base:precio,stock:cantidad,descripcion,imagen_url:imagen,disponible:p.disponible,categoria_id:categoria}})}}>Editar</button><button className="font-semibold text-amber-700" onClick={()=>{const p=row.original;const cantidad=Number(prompt('Nuevo stock',String(p.stock)));if(Number.isFinite(cantidad)&&cantidad>=0)stock.mutate({id:p.id,value:cantidad,available:confirm('¿Disponible para la venta?')})}}>Stock</button><button className="font-semibold text-red-700" onClick={()=>{if(confirm('¿Dar de baja este producto?'))remove.mutate(row.original.id)}}>Baja</button></div>})
+  helper.display({id:'acciones',header:'Acciones',cell:({row})=><div className="flex flex-wrap gap-2"><button className="font-semibold text-blue-800" onClick={()=>openProductEditor(row.original)}>Editar</button><button className="font-semibold text-amber-700" onClick={()=>{setErr('');setStockProduct(row.original);setStockDraft({stock:row.original.stock,disponible:row.original.disponible})}}>Stock</button><button className="font-semibold text-red-700" onClick={()=>{if(confirm('¿Dar de baja este producto?'))remove.mutate(row.original.id)}}>Baja</button></div>})
  ],[helper,remove,stock,update])
  return <div><Title subtitle="Alta, modificación, stock, disponibilidad y baja lógica.">Administrar productos</Title>{err&&<Alert>{err}</Alert>}<Card className="mb-5"><h2 className="mb-4 font-bold">Nuevo producto</h2><form className="grid gap-3 md:grid-cols-2" onSubmit={event=>{event.preventDefault();void form.handleSubmit()}}>
   <form.Field name="nombre">{f=><Field label="Nombre"><Input value={f.state.value} onChange={event=>f.handleChange(event.target.value)} required/></Field>}</form.Field>
@@ -54,7 +61,19 @@ export function ProductsAdmin(){
   <form.Field name="imagen_url">{f=><Field label="URL de imagen"><Input value={f.state.value} onChange={event=>f.handleChange(event.target.value)}/></Field>}</form.Field>
   <form.Field name="disponible">{f=><label className="flex items-center gap-2"><input type="checkbox" checked={f.state.value} onChange={event=>f.handleChange(event.target.checked)}/> Disponible para la venta</label>}</form.Field>
   <Button disabled={create.isPending}>Crear producto</Button>
- </form></Card><Table data={q.data?.items||[]} columns={columns}/></div>
+ </form></Card><Table data={q.data?.items||[]} columns={columns}/>
+ {editingProduct&&productDraft&&<Modal title="Editar producto" description={`Modificá los datos de ${editingProduct.nombre}.`} onClose={()=>{setEditingProduct(null);setProductDraft(null)}}><form className="grid gap-4 sm:grid-cols-2" onSubmit={event=>void saveProduct(event)}>
+  <Field label="Nombre"><Input value={productDraft.nombre} onChange={event=>setProductDraft({...productDraft,nombre:event.target.value})} required minLength={2}/></Field>
+  <Field label="Categoría"><select className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5" value={productDraft.categoria_id} onChange={event=>setProductDraft({...productDraft,categoria_id:Number(event.target.value)})} required>{cats.data?.map(category=><option key={category.id} value={category.id}>{category.nombre}</option>)}</select></Field>
+  <Field label="Precio"><Input type="number" min={0} step="0.01" value={productDraft.precio_base} onChange={event=>setProductDraft({...productDraft,precio_base:Number(event.target.value)})} required/></Field>
+  <Field label="Stock"><Input type="number" min={0} step="1" value={productDraft.stock} onChange={event=>setProductDraft({...productDraft,stock:Number(event.target.value)})} required/></Field>
+  <Field label="Descripción"><Input value={productDraft.descripcion} onChange={event=>setProductDraft({...productDraft,descripcion:event.target.value})}/></Field>
+  <Field label="URL de imagen"><Input value={productDraft.imagen_url} onChange={event=>setProductDraft({...productDraft,imagen_url:event.target.value})}/></Field>
+  <label className="flex items-center gap-2 text-sm font-medium text-slate-700 sm:col-span-2"><input type="checkbox" checked={productDraft.disponible} onChange={event=>setProductDraft({...productDraft,disponible:event.target.checked})}/> Disponible para la venta</label>
+  <div className="flex justify-end gap-3 border-t border-slate-200 pt-4 sm:col-span-2"><button type="button" className="rounded-xl border border-slate-300 px-4 py-2.5 font-semibold text-slate-700 hover:bg-slate-50" onClick={()=>{setEditingProduct(null);setProductDraft(null)}}>Cancelar</button><Button disabled={update.isPending}>{update.isPending?'Guardando…':'Guardar cambios'}</Button></div>
+ </form></Modal>}
+ {stockProduct&&<Modal title="Actualizar stock" description={`Producto: ${stockProduct.nombre}`} onClose={()=>setStockProduct(null)}><form className="grid gap-4" onSubmit={event=>void saveStock(event)}><Field label="Cantidad disponible"><Input type="number" min={0} step="1" value={stockDraft.stock} onChange={event=>setStockDraft({...stockDraft,stock:Number(event.target.value)})} required/></Field><label className="flex items-center gap-2 text-sm font-medium text-slate-700"><input type="checkbox" checked={stockDraft.disponible} onChange={event=>setStockDraft({...stockDraft,disponible:event.target.checked})}/> Disponible para la venta</label><div className="flex justify-end gap-3 border-t border-slate-200 pt-4"><button type="button" className="rounded-xl border border-slate-300 px-4 py-2.5 font-semibold text-slate-700 hover:bg-slate-50" onClick={()=>setStockProduct(null)}>Cancelar</button><Button disabled={stock.isPending}>{stock.isPending?'Guardando…':'Guardar stock'}</Button></div></form></Modal>}
+ </div>
 }
 export function OrdersAdmin(){
  const [err,setErr]=useState('')
